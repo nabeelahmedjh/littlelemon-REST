@@ -15,5 +15,8 @@ urlpatterns = [
     path('cart/menu-items/', views.cartItemsView, name='cart'),
 
 
+    path('orders/', views.ordersView, name='orders'),
+
+
 
 ]

@@ -3,14 +3,20 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 
-from .serializers import MenuItemSerializer, UserSerializer, CartSerializer
-from .models import MenuItem, UserCart
+from .serializers import MenuItemSerializer, UserSerializer, CartSerializer, OrderSerializer
+from .models import MenuItem, UserCart, Order, OrderItem
 
 
 from django.contrib.auth.models import User, Group
 from rest_framework.status import HTTP_200_OK, HTTP_403_FORBIDDEN, HTTP_400_BAD_REQUEST, HTTP_201_CREATED, HTTP_404_NOT_FOUND
 from rest_framework.permissions import IsAuthenticated
 from .permissions import IsManager, IsManagerOnly
+
+from django.urls import reverse
+from decimal import Decimal
+
+
+import requests
 
 # Create your views here.
 
@@ -203,8 +209,9 @@ def cartItemsView(request):
 
 
         if serializer.is_valid():
-            total_price = serializer.validated_data['item_quantity'] * serializer.validated_data['unit_price']
-            serializer.save(user=request.user, price=total_price)
+            unit_price = MenuItem.objects.get(id=request.data['menu_item']).price
+            total_price = serializer.validated_data['item_quantity'] * unit_price
+            serializer.save(user=request.user, unit_price=unit_price, price=total_price)
             return Response(serializer.data, status=HTTP_201_CREATED)
         else:
             return Response(serializer.errors, status=HTTP_400_BAD_REQUEST) 
@@ -221,3 +228,37 @@ def cartItemsView(request):
 @api_view(['GET', 'POST'])
 def ordersView(request):
     
+    if request.method == "GET":
+        if request.user.groups.filter(name='Manager').exists():
+            orders = Order.objects.all()
+        else:
+            orders = Order.objects.filter(user=request.user)
+
+        serializer = OrderSerializer(orders, many=True)
+        return Response(serializer.data, status=HTTP_200_OK)
+    
+    elif request.method == "POST":
+        order = Order.objects.create(user=request.user, total=0)
+
+        request._request.method = 'GET'
+        response = cartItemsView(request._request)
+        items = response.data
+        # add all the items into order items
+        for item in items:
+            OrderItem.objects.create(
+            order=order,
+            menuItem_id=item['menu_item'],
+            quantity=item['item_quantity'],
+            unit_price=item['unit_price'], 
+            price=item['price']
+            )
+
+            order.total += Decimal(item['price'])
+        order.save()
+        # delete all the items from the cart
+        request._request.method = 'DELETE'
+        cartItemsView(request._request)
+
+        return Response({
+            'message': 'Order placed successfully'
+        }, status=HTTP_201_CREATED)
