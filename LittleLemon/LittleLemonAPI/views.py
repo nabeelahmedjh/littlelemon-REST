@@ -3,14 +3,15 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 
-from .serializers import MenuItemSerializer, UserSerializer, CartSerializer, OrderSerializer
+from .serializers import MenuItemSerializer, UserSerializer, CartSerializer, OrderSerializer, OrderStatusSerializer, statusSerializer
 from .models import MenuItem, UserCart, Order, OrderItem
-
+from .filters import MenuItemFilter, OrderFilter
+from .permissions import IsManager, IsManagerOnly, IsDeliveryCrewOrManager
 
 from django.contrib.auth.models import User, Group
 from rest_framework.status import HTTP_200_OK, HTTP_403_FORBIDDEN, HTTP_400_BAD_REQUEST, HTTP_201_CREATED, HTTP_404_NOT_FOUND
 from rest_framework.permissions import IsAuthenticated
-from .permissions import IsManager, IsManagerOnly
+from rest_framework.pagination import PageNumberPagination
 
 from django.urls import reverse
 from decimal import Decimal
@@ -25,8 +26,17 @@ import requests
 def menuItemView(request):
 
     if request.method == 'GET':
-        menuItem = MenuItem.objects.all()
-        serializer = MenuItemSerializer(menuItem, many=True)
+
+        paginator = PageNumberPagination()
+        paginator.page_size = 2
+
+        queryset = MenuItem.objects.all()
+        filter = MenuItemFilter(request.GET, queryset=queryset)
+        if filter.is_valid():
+            menuItem = filter.qs
+        
+        result_page = paginator.paginate_queryset(menuItem, request)
+        serializer = MenuItemSerializer(result_page, many=True)
         return Response(serializer.data, status=HTTP_200_OK)
 
     else:
@@ -226,23 +236,44 @@ def cartItemsView(request):
         
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def ordersView(request):
     
     if request.method == "GET":
+        
+        paginator = PageNumberPagination()
+        paginator.page_size = 2
         if request.user.groups.filter(name='Manager').exists():
-            orders = Order.objects.all()
+            queryset = Order.objects.all()
+        elif request.user.groups.filter(name='delivery_crew').exists():
+            queryset = Order.objects.filter(delivery_crew=request.user)
         else:
-            orders = Order.objects.filter(user=request.user)
+            queryset = Order.objects.filter(user=request.user)
 
-        serializer = OrderSerializer(orders, many=True)
+        filter = OrderFilter(request.GET, queryset=queryset)
+        if filter.is_valid():
+            orders = filter.qs
+
+        result_page = paginator.paginate_queryset(orders, request)
+
+        serializer = OrderSerializer(result_page, many=True)
         return Response(serializer.data, status=HTTP_200_OK)
     
     elif request.method == "POST":
-        order = Order.objects.create(user=request.user, total=0)
 
         request._request.method = 'GET'
         response = cartItemsView(request._request)
+
         items = response.data
+        if not items:
+            return Response({
+                'message': 'Cart is empty'
+            }, status=HTTP_400_BAD_REQUEST)
+
+        order = Order.objects.create(user=request.user, total=0)
+
+
+
         # add all the items into order items
         for item in items:
             OrderItem.objects.create(
@@ -262,3 +293,56 @@ def ordersView(request):
         return Response({
             'message': 'Order placed successfully'
         }, status=HTTP_201_CREATED)
+    
+
+@api_view(['GET', 'PUT', 'PATCH', 'DELETE'])
+@permission_classes([IsAuthenticated, IsDeliveryCrewOrManager])
+def orderDetailView(request, pk):
+
+    try:
+        order = Order.objects.get(id=pk)
+    except Order.DoesNotExist:
+        return Response({
+            'message': 'Order not found'
+        }, status=HTTP_404_NOT_FOUND)
+            
+    if request.method == 'GET':
+            
+            if order.user != request.user:
+                return Response({
+                    'message': 'You are not allowed to view this order'
+                }, status=HTTP_403_FORBIDDEN)
+            # orderItems = OrderItem.objects.filter(order=order)
+
+            serializer = OrderSerializer(order)
+            return Response(serializer.data, status=HTTP_200_OK)
+    
+
+    elif request.method == 'DELETE':
+        
+        if User.objects.filter(groups__name='Manager').exists():
+            order.delete()
+            return Response({
+                'message': 'Order deleted successfully'
+            }, status=HTTP_200_OK) 
+    
+    elif request.method == 'PATCH':
+
+
+        if request.user.groups.filter(name='delivery_crew').exists():
+
+            serializer = statusSerializer(order, request.data)
+            # update status of the order
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data, status=HTTP_200_OK)
+            return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
+
+
+        if request.user.groups.filter(name='Manager').exists():
+
+            serializer = OrderSerializer(order, data=request.data)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data, status=HTTP_200_OK)
+            return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)

@@ -13,14 +13,19 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class MenuItemSerializer(serializers.ModelSerializer):
 
-    # category = CategorySerializer()
+    category = CategorySerializer(read_only=True)
+    category_id = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects.all(), 
+        source='category', 
+        write_only=True
+        )
     # title = serializers.CharField(max_length=255, validators=[
     #     UniqueValidator(queryset=MenuItem.objects.all())
     #     ])
 
     class Meta:
         model = MenuItem
-        fields = ['id', 'title', 'price', 'featured', 'category']
+        fields = ['id', 'title', 'price', 'featured', 'category_id', 'category']
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -63,7 +68,24 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = ['id', 'user', 'delivery_crew', 'status', 'total', 'date', 'order_items']
 
+        read_only_fields = ['user', 'total', 'date', 'order_items']
+        required_fields = ['status', 'delivery_crew']
     def get_order_items(self, obj):
         order_items = OrderItem.objects.filter(order=obj)
         order_item_serializer = OrderItemSerializer(order_items, many=True)
         return order_item_serializer.data
+    
+
+class OrderStatusSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Order
+        fields = ['id', 'user', 'delivery_crew', 'status', 'total', 'date']
+        read_only_fields = ['user', 'total', 'date']
+
+
+class statusSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Order
+        fields = ['status']
