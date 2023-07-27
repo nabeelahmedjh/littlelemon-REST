@@ -1,18 +1,20 @@
 from django.shortcuts import render
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
 
 
-from .serializers import MenuItemSerializer, UserSerializer, CartSerializer, OrderSerializer, OrderStatusSerializer, statusSerializer
-from .models import MenuItem, UserCart, Order, OrderItem
+from .serializers import CategorySerializer, MenuItemSerializer, UserSerializer, CartSerializer, OrderSerializer, OrderStatusSerializer, statusSerializer
+from .models import MenuItem, UserCart, Order, OrderItem, Category
 from .filters import MenuItemFilter, OrderFilter
 from .permissions import IsManager, IsManagerOnly, IsDeliveryCrewOrManager
+from .throttles import GroupSpecificThrottle
 
 from django.contrib.auth.models import User, Group
 from rest_framework.status import HTTP_200_OK, HTTP_403_FORBIDDEN, HTTP_400_BAD_REQUEST, HTTP_201_CREATED, HTTP_404_NOT_FOUND
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
-
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
+from rest_framework.views import APIView
 from django.urls import reverse
 from decimal import Decimal
 
@@ -21,7 +23,31 @@ import requests
 
 # Create your views here.
 
+
+class CategoryView(APIView):
+
+    permission_classes = [IsAuthenticated, IsManager]
+
+
+    def get(self, request):
+
+        categories = Category.objects.all()
+        serializer = CategorySerializer(categories, many=True)
+        return Response(serializer.data, status=HTTP_200_OK)
+
+
+    def post(self, request):
+
+        serilaizer = CategorySerializer(data=request.data)
+        if serilaizer.is_valid():
+            serilaizer.save()
+            return Response(serilaizer.data, status=HTTP_201_CREATED)
+        return Response(serilaizer.errors, status=HTTP_400_BAD_REQUEST)
+
+
+
 @api_view(['GET', 'POST'])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
 @permission_classes([IsAuthenticated, IsManager])
 def menuItemView(request):
 
@@ -32,9 +58,15 @@ def menuItemView(request):
 
         queryset = MenuItem.objects.all()
         filter = MenuItemFilter(request.GET, queryset=queryset)
+
+        ordering = request.GET.get('ordering', None)
         if filter.is_valid():
             menuItem = filter.qs
         
+        if ordering:
+            ordering = ordering.split(',')
+            menuItem = menuItem.order_by(*ordering)
+
         result_page = paginator.paginate_queryset(menuItem, request)
         serializer = MenuItemSerializer(result_page, many=True)
         return Response(serializer.data, status=HTTP_200_OK)
@@ -209,9 +241,10 @@ def cartItemsView(request):
         return Response(serializer.data, status=HTTP_200_OK)
     
     elif request.method == 'POST':
+
         serializer = CartSerializer(data=request.data)
 
-        itemAlreadyExist = UserCart.objects.filter(user=request.user, menu_item=request.data['menu_item'])
+        itemAlreadyExist = UserCart.objects.filter(user=request.user, menu_item=request.data.get("menu_item", None))
         if itemAlreadyExist:
             return Response({
                 'message': 'Item already exist in the cart'
@@ -236,6 +269,7 @@ def cartItemsView(request):
         
 
 @api_view(['GET', 'POST'])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
 @permission_classes([IsAuthenticated])
 def ordersView(request):
     
