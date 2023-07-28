@@ -29,6 +29,7 @@ class CategoryView(APIView):
     permission_classes = [IsAuthenticated, IsManager]
 
 
+
     def get(self, request):
 
         categories = Category.objects.all()
@@ -242,19 +243,10 @@ def cartItemsView(request):
     
     elif request.method == 'POST':
 
-        serializer = CartSerializer(data=request.data)
 
-        itemAlreadyExist = UserCart.objects.filter(user=request.user, menu_item=request.data.get("menu_item", None))
-        if itemAlreadyExist:
-            return Response({
-                'message': 'Item already exist in the cart'
-            }, status=HTTP_400_BAD_REQUEST)
-
-
+        serializer = CartSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            unit_price = MenuItem.objects.get(id=request.data['menu_item']).price
-            total_price = serializer.validated_data['item_quantity'] * unit_price
-            serializer.save(user=request.user, unit_price=unit_price, price=total_price)
+            serializer.save()
             return Response(serializer.data, status=HTTP_201_CREATED)
         else:
             return Response(serializer.errors, status=HTTP_400_BAD_REQUEST) 
@@ -293,6 +285,7 @@ def ordersView(request):
         serializer = OrderSerializer(result_page, many=True)
         return Response(serializer.data, status=HTTP_200_OK)
     
+
     elif request.method == "POST":
 
         request._request.method = 'GET'
@@ -319,6 +312,7 @@ def ordersView(request):
             )
 
             order.total += Decimal(item['price'])
+            
         order.save()
         # delete all the items from the cart
         request._request.method = 'DELETE'
@@ -360,7 +354,7 @@ def orderDetailView(request, pk):
                 'message': 'Order deleted successfully'
             }, status=HTTP_200_OK) 
     
-    elif request.method == 'PATCH':
+    elif request.method == 'PUT':
 
 
         if request.user.groups.filter(name='delivery_crew').exists():
@@ -380,3 +374,26 @@ def orderDetailView(request, pk):
                 serializer.save()
                 return Response(serializer.data, status=HTTP_200_OK)
             return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
+    
+
+    elif request.method == 'PATCH':
+        
+        if request.user.groups.filter(name='delivery_crew').exists():
+
+            serializer = statusSerializer(order, request.data, partial=True)
+            # update status of the order
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data, status=HTTP_200_OK)
+            return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
+
+
+        if request.user.groups.filter(name='Manager').exists():
+
+            serializer = OrderSerializer(order, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data, status=HTTP_200_OK)
+            return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
+
+    

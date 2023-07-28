@@ -36,10 +36,7 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class CartSerializer(serializers.ModelSerializer):
-
-    # user = UserSerializer(read_only=True)
-    # menu_item = MenuItemSerializer(read_only=True)
-
+    
     class Meta:
         model = UserCart
         fields = ['id', 'user', 'menu_item', 'item_quantity', 'unit_price', 'price']
@@ -52,6 +49,21 @@ class CartSerializer(serializers.ModelSerializer):
                 'min_value': 1,
                 }
         }
+
+        # set value of price and unit_price
+
+    def create(self, validated_data):
+        
+        validated_data['unit_price'] = validated_data['menu_item'].price
+        validated_data['price'] = validated_data['menu_item'].price * validated_data['item_quantity']
+        validated_data['user'] = self.context['request'].user
+        return super().create(validated_data)
+
+    def validate_menu_item(self, value):
+        if UserCart.objects.filter(user=self.context['request'].user, menu_item=value).exists():
+            raise serializers.ValidationError("Item already exists in cart")
+        return value
+    
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
